@@ -54,7 +54,7 @@ def main():
             if not file.is_file() and not file.is_symlink():
                 raise SystemExit(f'Missing source file: {file.relative_to(source)}')
             entries[file.relative_to(source).as_posix()] = file
-    for name in ('UI/SingleGame.h', 'build-ios/git-version.cpp'):
+    for name in ('UI/SingleGame.h', 'build-ios/git-version.cpp', 'git-version.cpp'):
         file = source / name
         if not file.is_file() or file.is_symlink():
             raise SystemExit(f'Missing required patched/generated source: {name}')

@@ -24,11 +24,12 @@ git apply "$BASE/mc3-directboot.patch"
 git -c core.hooksPath=/dev/null submodule update --init --recursive
 mkdir -p build-ios
 printf 'const char *PPSSPP_GIT_VERSION = "v1.20.4";\n#define PPSSPP_GIT_VERSION_NO_UPDATE 1\n' > build-ios/git-version.cpp
+cp build-ios/git-version.cpp git-version.cpp
 cmake -S . -B build-ios -G Xcode \
   -DCMAKE_TOOLCHAIN_FILE="$OUT/ppsspp/cmake/Toolchains/ios.cmake" \
   -DPPSSPP_SINGLE_GAME=ON
 xcodebuild -project build-ios/PPSSPP.xcodeproj -scheme PPSSPP -sdk iphoneos \
-  -configuration Release clean build CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+  -configuration Release clean build CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO IPHONEOS_DEPLOYMENT_TARGET=13.0
 APP="$OUT/staging/Payload/MC3.app"
 mkdir -p "$(dirname "$APP")"
 ditto build-ios/Release-iphoneos/PPSSPP.app "$APP"
@@ -64,8 +65,8 @@ PY_NOTICES
 { git rev-parse HEAD; git submodule status --recursive; } > "$APP/PPSSPP-SOURCE-REVISIONS.txt"
 cp "$BASE/mc3-directboot.patch" "$APP/MC3-SOURCE-PATCH.txt"
 # Verify the staged build identity and real iPhone device architecture before upload.
-xcrun lipo -verify_arch arm64 "$APP/PPSSPP"
-xcrun lipo -verify_arch arm64 "$APP/Frameworks/libMoltenVK.dylib"
+xcrun lipo "$APP/PPSSPP" -verify_arch arm64
+xcrun lipo "$APP/Frameworks/libMoltenVK.dylib" -verify_arch arm64
 file "$APP/PPSSPP" "$APP/Frameworks/libMoltenVK.dylib"
 python3 - "$APP" <<'PY_VERIFY'
 from pathlib import Path
