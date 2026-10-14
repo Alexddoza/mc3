@@ -1,0 +1,403 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 910f322..b33aaaf 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3,6 +3,15 @@ cmake_minimum_required(VERSION 3.16)
+ project(PPSSPP)
+ enable_testing()
+ 
++# Opt-in single-game variant. The ordinary PPSSPP build is unchanged.
++option(PPSSPP_SINGLE_GAME "Build the private MC3 direct-launch iOS variant" OFF)
++if(PPSSPP_SINGLE_GAME)
++	if(NOT IOS)
++		message(FATAL_ERROR "PPSSPP_SINGLE_GAME is supported only with the iOS toolchain")
++	endif()
++	add_compile_definitions(PPSSPP_SINGLE_GAME)
++endif()
++
+ #This is supposed to work but doesn't!
+ if(NOT ANDROID)
+ 	set(CMAKE_CXX_STANDARD 17)
+@@ -3148,6 +3157,10 @@ if(IOS AND NOT LIBRETRO)
+ 		set(ICON_NAME "AppIcon")
+ 		set(DISPLAY_NAME "PPSSPP")
+ 	endif()
++	if(PPSSPP_SINGLE_GAME)
++		set(BUNDLE_IDENTIFIER "local.mc3.directboot")
++		set(DISPLAY_NAME "Midnight Club 3")
++	endif()
+ 	if(IOS_APP_STORE)
+ 		message(STATUS "DevTeam: ${DEVELOPMENT_TEAM_ID} Icon: ${ICON_NAME} Target: ${TargetBin} Gold: ${GOLD} IAP: ${USE_IAP}")
+ 		message(STATUS "CURRENT_BINARY_DIR: ${CMAKE_CURRENT_BINARY_DIR}")
+diff --git a/UI/EmuScreen.cpp b/UI/EmuScreen.cpp
+index b294842..857c431 100644
+--- a/UI/EmuScreen.cpp
++++ b/UI/EmuScreen.cpp
+@@ -81,6 +81,7 @@ using namespace std::placeholders;
+ #include "UI/GamepadEmu.h"
+ #include "UI/PauseScreen.h"
+ #include "UI/MainScreen.h"
++#include "UI/SingleGame.h"
+ #include "UI/Background.h"
+ #include "UI/EmuScreen.h"
+ #include "UI/DevScreens.h"
+@@ -165,6 +166,10 @@ void EmuScreen::SetPSPAnalog(int iInternalScreenRotation, int stick, float x, fl
+ 
+ EmuScreen::EmuScreen(const Path &filename)
+ 	: gamePath_(filename) {
++#if defined(PPSSPP_SINGLE_GAME)
++	// Final gate for internal callers as well as external messages.
++	gamePath_ = SingleGame::gamePath;
++#endif
+ 	saveStateSlot_ = SaveState::GetCurrentSlot();
+ 	g_controlMapper.AddListener(this);
+ 
+@@ -558,6 +563,12 @@ void EmuScreen::focusChanged(ScreenFocusChange focusChange) {
+ }
+ 
+ void EmuScreen::sendMessage(UIMessage message, const char *value) {
++#if defined(PPSSPP_SINGLE_GAME)
++	// Keep game selection locked even when an external source posts a boot request.
++	if (message == UIMessage::REQUEST_GAME_BOOT) {
++		return;
++	}
++#endif
+ 	// External commands, like from the Windows UI.
+ 	// This happens on the main thread.
+ 	if (message == UIMessage::REQUEST_GAME_PAUSE && screenManager()->topScreen() == this) {
+@@ -1401,6 +1412,9 @@ void EmuScreen::deviceRestored(Draw::DrawContext *draw) {
+ }
+ 
+ void EmuScreen::OnDevTools(UI::EventParams &params) {
++#if defined(PPSSPP_SINGLE_GAME)
++	return;
++#endif
+ 	DevMenuScreen *devMenu = new DevMenuScreen(gamePath_, I18NCat::DEVELOPER);
+ 	if (params.v)
+ 		devMenu->SetPopupOrigin(params.v);
+@@ -1470,6 +1484,12 @@ void EmuScreen::update() {
+ 	}
+ 
+ 	if (!errorMessage_.empty()) {
++#if defined(PPSSPP_SINGLE_GAME)
++		SingleGame::error = errorMessage_;
++		errorMessage_.clear();
++		screenManager()->switchScreen(new MainScreen());
++		return;
++#else
+ 		auto err = GetI18NCategory(I18NCat::ERRORS);
+ 		auto di = GetI18NCategory(I18NCat::DIALOG);
+ 		std::string errLoadingFile = GetFriendlyPath(gamePath_) + "\n\n";
+@@ -1482,6 +1502,7 @@ void EmuScreen::update() {
+ 		errorMessage_.clear();
+ 		quit_ = true;
+ 		return;
++#endif
+ 	}
+ 
+ 	if (pauseTrigger_) {
+diff --git a/UI/GameSettingsScreen.cpp b/UI/GameSettingsScreen.cpp
+index cf9eaff..072aa04 100644
+--- a/UI/GameSettingsScreen.cpp
++++ b/UI/GameSettingsScreen.cpp
+@@ -1162,12 +1162,14 @@ void GameSettingsScreen::CreateToolsSettings(UI::ViewGroup *tools) {
+ 	tools->Add(new Choice(dev->T("System Information")))->OnClick.Add([=](UI::EventParams &) {
+ 		screenManager()->push(new SystemInfoScreen(gamePath_));
+ 	});
++#if !defined(PPSSPP_SINGLE_GAME)
+ 	tools->Add(new Choice(sy->T("Developer Tools")))->OnClick.Add([=](UI::EventParams &) {
+ 		screenManager()->push(new DeveloperToolsScreen(gamePath_));
+ 	});
+ 	tools->Add(new Choice(ri->T("Remote disc streaming")))->OnClick.Add([=](UI::EventParams &) {
+ 		screenManager()->push(new RemoteISOScreen(gamePath_));
+ 	});
++#endif
+ }
+ 
+ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
+diff --git a/UI/MainScreen.cpp b/UI/MainScreen.cpp
+index 1af913c..1645ecf 100644
+--- a/UI/MainScreen.cpp
++++ b/UI/MainScreen.cpp
+@@ -41,6 +41,7 @@
+ #include "UI/BackgroundAudio.h"
+ #include "UI/EmuScreen.h"
+ #include "UI/MainScreen.h"
++#include "UI/SingleGame.h"
+ #include "UI/GameScreen.h"
+ #include "UI/GameInfoCache.h"
+ #include "UI/GameSettingsScreen.h"
+@@ -126,6 +127,9 @@ MainScreen::~MainScreen() {
+ }
+ 
+ bool MainScreen::WantsTextInput() const {
++#if defined(PPSSPP_SINGLE_GAME)
++	return false;
++#endif
+ 	// We don't want to pop a software keyboard on the main screen, just for type-to-search.
+ 	return !System_GetPropertyBool(SYSPROP_KEYBOARD_IS_SOFT);
+ }
+@@ -329,6 +333,29 @@ void MainScreen::CreateMainButtons(UI::ViewGroup *parent, bool portrait) {
+ }
+ 
+ void MainScreen::CreateViews() {
++#if defined(PPSSPP_SINGLE_GAME)
++	using namespace UI;
++	root_ = new ScrollView(ORIENT_VERTICAL);
++	auto column = root_->Add(new LinearLayout(ORIENT_VERTICAL,
++		new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(24, 24, 24, 24))));
++	column->Add(new TextView(SingleGame::title));
++	column->Add(new Spacer(16.0f));
++	std::string message = SingleGame::error.empty()
++		? "The game has stopped. Start it again when you are ready."
++		: "Could not start the game.\n\n" + SingleGame::error;
++	column->Add(new TextView(message, FLAG_WRAP_TEXT, false, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT)));
++	column->Add(new Spacer(16.0f));
++	auto retry = column->Add(new Choice("Start game"));
++	retry->SetEnabled(SingleGame::contentReady);
++	retry->OnClick.Add([this](UI::EventParams &) {
++		SingleGame::error.clear();
++		screenManager()->switchScreen(new EmuScreen(SingleGame::gamePath));
++	});
++	column->Add(new Choice("Controls and settings"))->OnClick.Handle(this, &MainScreen::OnGameSettings);
++	column->Add(new TextView("Powered by PPSSPP. Private, unofficial single-game build.", FLAG_WRAP_TEXT, false));
++	root_->SetDefaultFocusView(retry);
++	return;
++#endif
+ 	// Information in the top left.
+ 	// Back button to the bottom left.
+ 	// Scrolling action menu to the right.
+@@ -515,6 +542,9 @@ void MainScreen::CreateViews() {
+ }
+ 
+ bool MainScreen::key(const KeyInput &key) {
++#if defined(PPSSPP_SINGLE_GAME)
++	return UIBaseScreen::key(key);
++#endif
+ 	if (key.flags & KeyInputFlags::DOWN) {
+ 		if (key.keyCode == NKCODE_F && (key.flags & KeyInputFlags::MOD_CTRL) && System_GetPropertyBool(SYSPROP_HAS_TEXT_INPUT_DIALOG)) {
+ 			auto se = GetI18NCategory(I18NCat::SEARCH);
+@@ -568,6 +598,11 @@ void MainScreen::OnDownloadUpgrade(UI::EventParams &e) {
+ }
+ 
+ void MainScreen::sendMessage(UIMessage message, const char *value) {
++#if defined(PPSSPP_SINGLE_GAME)
++	if (message == UIMessage::REQUEST_GAME_BOOT) {
++		return;
++	}
++#endif
+ 	// Always call the base class method first to handle the most common messages.
+ 	UIBaseScreen::sendMessage(message, value);
+ 
+@@ -750,6 +785,9 @@ void MainScreen::OnForums(UI::EventParams &e) {
+ }
+ 
+ void MainScreen::dialogFinished(const Screen *dialog, DialogResult result) {
++#if defined(PPSSPP_SINGLE_GAME)
++	return;
++#endif
+ 	std::string tag = dialog->tag();
+ 	if (tag == "Store") {
+ 		backFromStore_ = true;
+diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
+index 4a26924..b64d2fc 100644
+--- a/UI/NativeApp.cpp
++++ b/UI/NativeApp.cpp
+@@ -24,6 +24,10 @@
+ // Windows has its own code that bypasses the framework entirely.
+ 
+ #include "ppsspp_config.h"
++#include "UI/SingleGame.h"
++#if defined(PPSSPP_SINGLE_GAME)
++#include "UI/MainScreen.h"
++#endif
+ 
+ // Background worker threads should be spawned in NativeInit and joined
+ // in NativeShutdown.
+@@ -713,6 +717,17 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ 
+ 	DEBUG_LOG(Log::System, "ScreenManager!");
+ 	g_screenManager = new ScreenManager();
++#if defined(PPSSPP_SINGLE_GAME)
++	// Never fall through to a logo, first-run picker, or arbitrary game browser.
++	if (SingleGame::contentReady && !boot_filename.empty()) {
++		g_screenManager->switchScreen(new EmuScreen(boot_filename));
++	} else {
++		if (SingleGame::error.empty()) {
++			SingleGame::error = "The private game content is missing. Rebuild this app with your game-root folder.";
++		}
++		g_screenManager->switchScreen(new MainScreen());
++	}
++#else
+ 	if (g_Config.memStickDirectory.empty()) {
+ 		INFO_LOG(Log::System, "No memstick directory! Asking for one to be configured.");
+ 		g_screenManager->switchScreen(new LogoScreen(AfterLogoScreen::MEMSTICK_SCREEN_INITIAL_SETUP));
+@@ -731,6 +746,8 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ 		g_screenManager->switchScreen(new LogoScreen(AfterLogoScreen::DEFAULT));
+ 	}
+ 
++#endif  // PPSSPP_SINGLE_GAME
++
+ 	g_screenManager->SetBackgroundOverlayScreens(new BackgroundScreen(), new OSDOverlayScreen());
+ 
+ 	// Easy testing
+diff --git a/UI/PauseScreen.cpp b/UI/PauseScreen.cpp
+index 12b9d00..b124134 100644
+--- a/UI/PauseScreen.cpp
++++ b/UI/PauseScreen.cpp
+@@ -629,12 +629,15 @@ void GamePauseScreen::CreateViews() {
+ 	buttonColumn->Add(rightColumnItems);
+ 
+ 	rightColumnItems->SetSpacing(0.0f);
++	#if !defined(PPSSPP_SINGLE_GAME)
+ 	if (getUMDReplacePermit()) {
+ 		rightColumnItems->Add(new Choice(pa->T("Switch UMD"), ImageID("I_UMD")))->OnClick.Add([this](UI::EventParams &) {
+ 			screenManager()->push(new UmdReplaceScreen());
+ 		});
+ 	}
+ 
++	#endif
++
+ 	if (!portrait) {
+ 		Choice *continueChoice = rightColumnItems->Add(new Choice(pa->T("Continue"), ImageID("I_PLAY")));
+ 		root_->SetDefaultFocusView(continueChoice);
+@@ -689,7 +692,11 @@ void GamePauseScreen::CreateViews() {
+ 		auto di = GetI18NCategory(I18NCat::DIALOG);
+ 		exit = new Choice(di->T("Exit"), ImageID("I_EXIT"));
+ 	} else {
++#if defined(PPSSPP_SINGLE_GAME)
++		exit = new Choice("Stop game", ImageID("I_EXIT"));
++#else
+ 		exit = new Choice(pa->T("Exit to menu"), ImageID("I_EXIT"));
++#endif
+ 	}
+ 
+ 	if (portrait) {
+diff --git a/UI/SingleGame.h b/UI/SingleGame.h
+new file mode 100644
+index 0000000..d0c5a13
+--- /dev/null
++++ b/UI/SingleGame.h
+@@ -0,0 +1,12 @@
++// Single-game launcher changes: GPL-2.0-or-later, same as PPSSPP.
++#pragma once
++#if defined(PPSSPP_SINGLE_GAME)
++#include <string>
++#include "Common/File/Path.h"
++namespace SingleGame {
++inline Path gamePath;
++inline std::string error;
++inline bool contentReady = false;
++inline constexpr char title[] = "Midnight Club 3";
++}  // namespace SingleGame
++#endif
+diff --git a/ios/AppDelegate.mm b/ios/AppDelegate.mm
+index db3fe95..b2d4b64 100644
+--- a/ios/AppDelegate.mm
++++ b/ios/AppDelegate.mm
+@@ -110,6 +110,10 @@ - (void)applicationWillTerminate:(UIApplication *)application {
+ 
+ // In AppDelegate.mm
+ - (void)processFilePath:(NSString *)path {
++#if defined(PPSSPP_SINGLE_GAME)
++	// This private app boots only its bundled game, never a received URL/file.
++	return;
++#endif
+ 	// Convert NSString to std::string
+ 	std::string cppPath([path UTF8String]);
+ 
+diff --git a/ios/SceneDelegate.mm b/ios/SceneDelegate.mm
+index c1e52a8..7a63671 100644
+--- a/ios/SceneDelegate.mm
++++ b/ios/SceneDelegate.mm
+@@ -17,6 +17,60 @@
+ 
+ #import <AVFoundation/AVFoundation.h>
+ #include <string>
++#include "UI/SingleGame.h"
++#if defined(PPSSPP_SINGLE_GAME)
++#import <CommonCrypto/CommonDigest.h>
++
++// Fast launch preflight: all file sizes, plus hashes for the boot/SFO/UMD files.
++// Full SHA-256 verification of every asset is performed by the packaging tool.
++static NSString *CheckSingleGameContent(NSString *root) {
++	NSFileManager *fm = [NSFileManager defaultManager];
++	NSString *manifestPath = [[root stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"manifest.json"];
++	NSData *data = [NSData dataWithContentsOfFile:manifestPath];
++	if (!data) return @"The private game manifest is missing. Rebuild the app with your game-root folder.";
++	id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
++	if (![object isKindOfClass:[NSDictionary class]]) return @"The private game manifest is invalid.";
++	NSDictionary *manifest = object;
++	if (![manifest[@"disc_id"] isEqual:@"ULUS10021"] || ![manifest[@"files"] isKindOfClass:[NSArray class]])
++		return @"The bundled content is not the configured Midnight Club 3 edition (ULUS10021).";
++	NSArray *required = @[@"PSP_GAME/PARAM.SFO", @"PSP_GAME/SYSDIR/EBOOT.BIN", @"PSP_GAME/USRDIR/pspasset.dat", @"UMD_DATA.BIN"];
++	NSMutableSet *seen = [NSMutableSet set];
++	for (id item in manifest[@"files"]) {
++		if (![item isKindOfClass:[NSDictionary class]]) return @"The game manifest has an invalid entry.";
++		NSString *relative = item[@"path"];
++		if (![relative isKindOfClass:[NSString class]] || [relative isAbsolutePath] ||
++			[[relative pathComponents] containsObject:@".."] || [seen containsObject:relative])
++			return @"The game manifest contains an invalid path.";
++		[seen addObject:relative];
++		NSString *file = [root stringByAppendingPathComponent:relative];
++		NSDictionary *attributes = [fm attributesOfItemAtPath:file error:nil];
++		NSNumber *expectedSize = item[@"size"];
++		if (![expectedSize isKindOfClass:[NSNumber class]] ||
++			![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
++			[attributes[NSFileSize] unsignedLongLongValue] != [expectedSize unsignedLongLongValue])
++			return [NSString stringWithFormat:@"Missing or incomplete game file: %@. Rebuild from a verified copy.", relative];
++		BOOL critical = [relative isEqual:@"PSP_GAME/PARAM.SFO"] ||
++			[relative hasPrefix:@"PSP_GAME/SYSDIR/"] || [relative isEqual:@"UMD_DATA.BIN"];
++		if (critical) {
++			// Cap files read into memory. The configured edition's boot files are small.
++			if ([expectedSize unsignedLongLongValue] > 32 * 1024 * 1024)
++				return @"A boot file is unexpectedly large.";
++			NSData *bytes = [NSData dataWithContentsOfFile:file];
++			if (!bytes) return [NSString stringWithFormat:@"Cannot read boot file: %@", relative];
++			unsigned char digest[CC_SHA256_DIGEST_LENGTH];
++			CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
++			NSMutableString *hex = [NSMutableString stringWithCapacity:64];
++			for (unsigned char byte : digest) [hex appendFormat:@"%02x", byte];
++			if (![hex isEqual:item[@"sha256"]])
++				return [NSString stringWithFormat:@"Corrupt boot file: %@. Rebuild from a verified copy.", relative];
++		}
++	}
++	for (NSString *path in required) {
++		if (![seen containsObject:path]) return [NSString stringWithFormat:@"Required game file is not listed: %@", path];
++	}
++	return nil;
++}
++#endif
+ 
+ static std::string gStartupArgStorage;
+ 
+@@ -105,6 +159,15 @@ -(void) launchPPSSPP {
+ 		startupPath = nsString;
+ 	}
+ 
++#if defined(PPSSPP_SINGLE_GAME)
++	// Resolve from the current bundle on every launch/restart; app paths can change.
++	startupPath = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"MC3Content/game-root"];
++	SingleGame::gamePath = Path(startupPath.UTF8String);
++	NSString *contentError = CheckSingleGameContent(startupPath);
++	SingleGame::contentReady = contentError == nil;
++	SingleGame::error = contentError ? std::string(contentError.UTF8String) : std::string();
++#endif
++
+ 	if (startupPath.length > 0) {
+ 		// Keep cold-start argv behavior aligned with processFilePath().
+ 		std::string startupPathUtf8(startupPath.UTF8String);
+diff --git a/ios/main.mm b/ios/main.mm
+index 3b9f574..bebf5e5 100644
+--- a/ios/main.mm
++++ b/ios/main.mm
+@@ -655,7 +655,8 @@ int main(int argc, char *argv[]) {
+ 
+ 	g_logManager.EnableOutput(LogOutput::Stdio);
+ 
+-#if PPSSPP_PLATFORM(IOS_APP_STORE)
++#if PPSSPP_PLATFORM(IOS_APP_STORE) || defined(PPSSPP_SINGLE_GAME)
++	// The private signed variant intentionally uses the IR interpreter.
+ 	g_jitAvailable = false;
+ #else
+ 	// Hacky hacks to try to enable JIT by pretending to be a debugger.

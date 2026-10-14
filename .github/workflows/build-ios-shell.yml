@@ -1,0 +1,57 @@
+name: Build MC3 iOS app shell (no game content)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mc3-directboot.patch'
+      - 'tools/**'
+      - 'tests/**'
+      - '.github/workflows/build-ios-shell.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ios-shell:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test private packaging tools using synthetic fixtures
+        run: |
+          python3 -m unittest discover -s tests -v
+          bash -n tools/build-shell-macos.sh
+          bash -n tools/build-macos.sh
+      - name: Check available build tools
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          cmake --version
+          python3 --version
+      - name: Build the pinned, unsigned app shell
+        run: bash tools/build-shell-macos.sh "$RUNNER_TEMP/mc3-build"
+      - name: Archive matching source and enforce artifact size limit
+        run: |
+          python3 tools/archive-source.py --source "$RUNNER_TEMP/mc3-build/ppsspp" --kit "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/mc3-build/MC3-corresponding-source.tar.xz"
+          python3 - "$RUNNER_TEMP/mc3-build" <<'PY_SIZE'
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          files = [root / name for name in ('MC3-shell-unsigned.ipa', 'MC3-shell-unsigned.ipa.sha256', 'MC3-corresponding-source.tar.xz', 'MC3-corresponding-source.tar.xz.sha256')]
+          total = sum(p.stat().st_size for p in files)
+          assert total <= 450_000_000, f'Artifact exceeds the 450 MB safety cap: {total} bytes. No upload permitted.'
+          print(f'Combined public artifact size: {total:,} bytes (cap: 450,000,000).')
+          PY_SIZE
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: MC3-shell-unsigned
+          path: |
+            ${{ runner.temp }}/mc3-build/MC3-shell-unsigned.ipa
+            ${{ runner.temp }}/mc3-build/MC3-shell-unsigned.ipa.sha256
+            ${{ runner.temp }}/mc3-build/MC3-corresponding-source.tar.xz
+            ${{ runner.temp }}/mc3-build/MC3-corresponding-source.tar.xz.sha256
+          if-no-files-found: error
+          retention-days: 1

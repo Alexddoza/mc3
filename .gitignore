@@ -1,0 +1,22 @@
+# Do not put game assets, private binary outputs, signing files, or credentials in source control.
+PSP_GAME/
+game-root/
+MC3Content/
+*.iso
+*.cso
+*.chd
+*.zip
+*.7z
+*.rar
+*.ipa
+*.p12
+*.mobileprovision
+*.key
+*.pem
+.env*
+__pycache__/
+*.pyc
+build*/
+output*/
+private*/
+ppsspp/

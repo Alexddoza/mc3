@@ -47,7 +47,7 @@ A failed prerequisite/build step stops the script. Do not treat a partial output
 `.github/workflows/build-ios-shell.yml` runs on pushes to `main` and can be started manually. It uses the standard `macos-15` GitHub-hosted runner and its installed Xcode 16.4. GitHub documents standard runner usage as free for public repositories: https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job
 
 1. Keep only source and build instructions in this public repository. Never commit game files, save data, signing credentials, or private archives.
-2. The workflow tests the packaging tools, then builds the pinned unsigned app with no game files. It keeps `MC3-shell-unsigned.ipa` for three days. This incomplete shell shows a missing-game screen if legitimately signed and installed.
+2. The workflow tests the packaging tools, then builds the pinned unsigned app with no game files. It keeps `MC3-shell-unsigned.ipa` and the matching patched source/submodules for one day, with a strict 450 MB combined upload cap. This incomplete shell shows a missing-game screen if legitimately signed and installed.
 3. Download the successful shell artifact. On Linux, macOS, or another Python 3 computer with your private game-root, run:
 
 ```sh
