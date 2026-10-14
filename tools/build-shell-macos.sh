@@ -41,7 +41,7 @@ from pathlib import Path
 p = Path(sys.argv[1]); info = plistlib.loads(p.read_bytes())
 info.update(CFBundleDisplayName='Midnight Club 3', CFBundleName='MC3',
             CFBundleIdentifier='local.mc3.directboot', CFBundleShortVersionString='1.20.4',
-            CFBundleVersion='12004.1', UISupportsDocumentBrowser=False,
+            CFBundleVersion='12004.2', MC3ContentSchema=2, MC3BootMode='iso', UISupportsDocumentBrowser=False,
             UIFileSharingEnabled=True)
 for key in ('CFBundleURLTypes', 'CFBundleDocumentTypes', 'UTExportedTypeDeclarations'):
     info.pop(key, None)
@@ -75,6 +75,7 @@ app = Path(sys.argv[1])
 info = plistlib.loads((app / 'Info.plist').read_bytes())
 assert info['CFBundleIdentifier'] == 'local.mc3.directboot', 'Unexpected app ID'
 assert info['CFBundleExecutable'] == 'PPSSPP', 'Unexpected executable'
+assert info['MC3ContentSchema'] == 2 and info['MC3BootMode'] == 'iso', 'Unexpected content format'
 assert 'iPhoneOS' in info['CFBundleSupportedPlatforms'], 'Not an iPhone device build'
 assert not (app / 'MC3Content').exists(), 'Private game content must never enter CI'
 assert not (app / '_CodeSignature').exists(), 'Expected an unsigned shell'
@@ -85,5 +86,5 @@ PY_VERIFY
 (cd "$OUT/staging" && ditto -c -k --norsrc --noextattr --keepParent Payload "$OUT/MC3-shell-unsigned.ipa")
 shasum -a 256 "$OUT/MC3-shell-unsigned.ipa" > "$OUT/MC3-shell-unsigned.ipa.sha256"
 echo "Created $OUT/MC3-shell-unsigned.ipa. This is NOT installable until properly signed."
-echo 'This shell intentionally has no game content. Use bundle-private-game.py locally to add your game.'
+echo 'This shell intentionally has no game content. Use bundle-private-game.py locally to add your verified game ISO.'
 echo 'No iPhone gameplay, performance, entitlement, or signing compatibility is established by this build.'

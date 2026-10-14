@@ -1,26 +1,27 @@
 # mc3
 
-MC3 direct-launch iOS source kit
+MC3 direct-launch iOS source kit, built on official PPSSPP v1.20.4 at commit `fa50bb1976065c4f8b1b47af227d367fe9771555`.
 
-This is a source/build handoff, not a compiled or tested iPhone app. It modifies official PPSSPP v1.20.4 at commit `fa50bb1976065c4f8b1b47af227d367fe9771555`. It runs the PSP game through PPSSPP internally. It is not a native recompile of Midnight Club 3.
+This runs the PSP game through PPSSPP internally. It is not a native recompile of Midnight Club 3. This public repository and its CI artifacts contain no Midnight Club 3 game data, saves, signing credentials, or private archives.
 
-## Intended app behavior
+## Intended behavior
 
-- A separate app named **Midnight Club 3**, bundle ID `local.mc3.directboot`.
-- Launch resolves `MC3Content/game-root` in the current app bundle and boots it automatically, skipping the PPSSPP logo/game chooser.
-- The extracted directory containing `PSP_GAME` and `UMD_DATA.BIN` is directly supported by PPSSPP; no ISO reconstruction is required.
-- Missing/incomplete files and detected boot corruption show a game-specific error/recovery screen. No game chooser is used on that path or after stopping the game.
-- PPSSPP touch controls, controller support, game saves, save states, audio/video, and pause/settings remain.
-- Private game files are read from the app bundle; saves/configuration remain in the app's writable Documents sandbox. Installing over the same app ID should retain data, but deleting the app removes its sandbox. Back up saves before replacing an installation.
-- Incoming file/deep links, switch-UMD, remote disc browsing, and developer-game-selection paths are disabled for this build. Internal EmuScreen construction is pinned to this game.
-- This signing-compatible baseline deliberately disables PPSSPP's startup JIT/ptrace attempts and uses its IR interpreter. No promise of full speed is made. Signing via Signulous does not by itself establish JIT availability.
-- The original PPSSPP icon and credits are retained; the app label is customized. This is an unofficial private build.
+- Separate app named **Midnight Club 3**, bundle ID `local.mc3.directboot`.
+- Starts the fixed bundled `MC3Content/game.iso` automatically without PPSSPP's game chooser.
+- Missing/incomplete ISO or invalid boot data shows a game-specific recovery screen.
+- Keeps PPSSPP touch/controller controls, pause/settings, audio/video, saves, and save states.
+- Saves/configuration stay in the app's writable Documents sandbox. Back up saves before replacing an installation; deleting the app removes its sandbox.
+- Incoming game links, switch-UMD, remote disc browsing, and developer game-selection paths are disabled.
+- Uses the IR interpreter and disables startup JIT/ptrace attempts. Signing alone does not provide JIT or establish playable performance.
+- Retains PPSSPP's original icon, credits, and license notices. This is an unofficial build.
 
-## Build status and scope
+An ISO is required because MC3's raw-sector read-ahead can cross file boundaries. PPSSPP's extracted-directory virtual disc cannot satisfy every such read. A reconstructed ISO must still be validated and tested; reconstruction does not establish the original retail sector layout.
 
-The repository contains source and build instructions only. GitHub Actions builds an unsigned, game-free iOS app shell. The shell is not a playable game and must not be presented as one. A successful compile does not establish codesigning, installation, physical-device controls, saves, graphics/audio, or performance.
+## Build and test status
 
-Local Python-tool tests and shell syntax checks are reproducible with:
+The workflow builds an unsigned, game-free iPhone arm64 app shell. This shell is not a playable game. Compilation does not establish signing, installation, gameplay, controls, saving, graphics/audio, or acceptable frame rate. Check the run for the exact commit before using any artifact.
+
+Run the source-only tooling checks:
 
 ```sh
 python3 -m unittest discover -s tests -v
@@ -28,62 +29,56 @@ bash -n tools/build-shell-macos.sh
 bash -n tools/build-macos.sh
 ```
 
-## Route A: one private Mac build
+## Route A: private Mac build
 
-Prerequisites: a Mac, full Xcode selected as the active developer directory, the iPhoneOS SDK, Git, CMake, Python 3, and `ditto`. The script checks these; it does not install them, accept Apple agreements, create credentials, or start paid services. A full recursive PPSSPP source/dependency download and adequate disk space are required. The upstream toolchain targets arm64 physical devices, not an iPhone simulator.
-
-From this kit:
+Prerequisites: macOS, full Xcode selected as the active developer directory, iPhoneOS SDK, Git, CMake, Python 3, and `ditto`. A fresh output directory and enough disk space for PPSSPP's recursive dependencies are required. The scripts do not install software, accept Apple agreements, create credentials, or start paid services. The app targets physical arm64 iPhones/iPads on iOS 13 or later, not the simulator.
 
 ```sh
-bash tools/build-macos.sh /absolute/path/to/game-root /absolute/path/to/new-output
+bash tools/build-macos.sh /absolute/path/to/game.iso /absolute/path/to/new-output
 ```
 
-The output directory must be new. The script downloads the official pinned source and its recursive submodules, applies the patch, compiles an unsigned Release app using Xcode, packages the source-only shell, then privately inserts the game. Expected final output is `MC3-unsigned.ipa` with a SHA-256 sidecar. It still requires legitimate signing before installation.
+The script builds the unsigned content-free shell, then privately packages the verified USA ULUS10021 ISO. Output is `MC3-unsigned.ipa` plus its SHA-256 sidecar. Legitimate signing and device testing are still required.
 
-A failed prerequisite/build step stops the script. Do not treat a partial output or source-only shell as the final working game.
+## Route B: source-only CI and private ISO bundling
 
-## Route B: source-only Mac CI, private local game bundling
+`.github/workflows/build-ios-shell.yml` runs on relevant pushes to `main` and can be started manually. It uses the standard `macos-15` GitHub-hosted runner and its installed Xcode 16.4. GitHub documents free standard-runner use for public repositories: https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job
 
-`.github/workflows/build-ios-shell.yml` runs on pushes to `main` and can be started manually. It uses the standard `macos-15` GitHub-hosted runner and its installed Xcode 16.4. GitHub documents standard runner usage as free for public repositories: https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job
-
-1. Keep only source and build instructions in this public repository. Never commit game files, save data, signing credentials, or private archives.
-2. The workflow tests the packaging tools, then builds the pinned unsigned app with no game files. It keeps `MC3-shell-unsigned.ipa` and the matching patched source/submodules for one day, with a strict 450 MB combined upload cap. This incomplete shell shows a missing-game screen if legitimately signed and installed.
-3. Download the successful shell artifact. On Linux, macOS, or another Python 3 computer with your private game-root, run:
+1. Keep only code and build instructions in this public repository.
+2. The workflow builds and checks an unsigned arm64 iPhone shell with no game content. It archives the exact patched PPSSPP source, recursive submodules, build kit, and revision manifest beside the shell. Combined artifact uploads are capped at 450 MB and retained for one day. No larger runners or paid-service settings are used.
+3. Download the successful `MC3-shell-unsigned` artifact. Its shell has content schema 2, boot mode `iso`, and bundle version `12004.2`. Earlier directory-launch shells are incompatible.
+4. On a private Python 3 computer, add your verified ISO:
 
 ```sh
 python3 tools/bundle-private-game.py \
   --shell-ipa /path/to/MC3-shell-unsigned.ipa \
-  --game-root /path/to/game-root \
-  --output /path/to/MC3-unsigned.ipa
+  --game-iso /private/path/to/game.iso \
+  --output /private/path/to/MC3-unsigned.ipa
 ```
 
-This step never uploads data. It preserves the shell's executable-mode metadata and framework symlinks, computes SHA-256 for all game files, checks streamed bytes against those hashes, and reads back ZIP members for CRC errors. It refuses an existing output, an unexpected app identity, unsafe paths, or an already signed/content-filled shell.
+The bundler never uploads data. It validates the ISO9660 structure and game identity, hashes the whole ISO, checks streamed bytes while packaging, preserves the app executable/symlink metadata, and checks ZIP CRCs. It refuses incompatible, signed, content-filled, or unsafe shells and existing output files.
 
-4. Sign the completed private IPA using an authorized signing method/profile. The signer must sign the main executable and embedded MoltenVK library, set any valid profile/entitlements, and preserve bundled content. This kit never adds private/jailbreak entitlements or bypasses signature checks. Signer compatibility is untested. Uploading the completed IPA to any signing service also transmits the bundled game to that service; do that only with the necessary rights and explicit authorization.
-5. Install and complete the physical-device acceptance checklist below.
+5. Sign the completed private IPA using an authorized signing method/profile. The signer must sign the app executable and embedded MoltenVK library and preserve the game data. This kit does not use jailbreak/private entitlements or signature bypasses. Uploading the finished IPA to a signing service transmits the game to that service; do so only with the necessary rights and explicit authorization.
 
-## Content validation and limits
+## Integrity limits
 
-`tools/content.py` accepts only an extracted USA ULUS10021 root, verifies the SFO and executable headers, refuses symlinks/nested archives/PSP firmware updater files, and hashes every included file. The build tool creates a manifest, not a claim about retail authenticity.
+The packaging tool validates the complete ISO SHA-256. Runtime preflight checks the ISO size and bounded SHA-256 ranges covering volume descriptors, directory layout, PARAM.SFO, boot executable prefix, UMD data, and the asset archive prefix. It does not hash the entire ISO at every launch. Same-size changes outside those ranges are not guaranteed to be caught before gameplay. Arbitrary emulator crashes or corrupt in-game assets cannot be guaranteed to produce the recovery screen.
 
-Runtime preflight checks sizes for all files and SHA-256 for SFO/UMD/boot files. It does not hash all game assets on the main thread at every launch, which could delay startup or trigger iOS's watchdog. A same-size mutation of a nonboot asset after packaging is not guaranteed to be caught by that preflight. PPSSPP-reported boot failures are shown on the custom recovery screen; arbitrary in-game corruption or emulator crashes cannot be guaranteed to produce that screen.
-
-No game file, encrypted/decrypted PSP executable, key, firmware, or archive is included in this source kit.
+No game executable, firmware, key, or game archive is provided here. Synthetic test fixtures contain no real game bytes.
 
 ## Physical-device acceptance checklist
 
 Record iPhone model, iOS version, signing method, app version, and CPU/GPU backend.
 
-- First install/cold launch: boots MC3 without a game chooser; no loop or unexpected permission prompt.
-- Reach actual gameplay and drive a race. Record frame rate, audio quality, input lag, heat, and crashes. An IR-interpreter build may be too slow.
-- Touch controls and at least one controller if relevant; pause, resume, reset, and stop/restart the game.
-- Save in the game's own menu, terminate normally, cold relaunch, and reload the save. Also test save-state creation/loading separately.
-- Background/foreground, phone/audio interruption, rotation, and repeated relaunch.
-- Upgrade with the same bundle ID; verify saves still exist. Do not uninstall for this test.
-- Asset-free shell: readable missing-content screen, no picker. Intentionally truncated/altered boot-file test build: readable error, no picker.
-- External game URL/file and controller dev-menu shortcut do not offer other games.
-- Test signed final IPA, not only Xcode's development build. Verify signer's handling of the embedded framework.
+- Cold launch boots MC3 directly, without a game chooser or unexpected permission prompt.
+- Reach gameplay and drive a race. Check frame rate, sound, input lag, heat, and crashes. IR interpretation may be too slow.
+- Test touch controls, controller if available, pause/resume, reset, and stop/restart.
+- Save in the game, terminate normally, cold relaunch, and load the save. Test save states separately.
+- Test background/foreground, audio interruptions, rotation, and repeated relaunch.
+- Upgrade with the same bundle ID and confirm saves survive. Do not uninstall for this test.
+- The content-free shell displays a readable missing-content screen. A corrupt-boot test build displays recovery, never another game picker.
+- External game links and controller developer shortcuts cannot select other games.
+- Test the final legitimately signed IPA, including its embedded library.
 
 ## Source and notices
 
-Keep this kit and the complete exact upstream/submodule checkout beside any resulting binary. The build retains matching license/notice files and a source revision manifest in the app. PPSSPP's GPL-2.0-or-later licensing and each dependency's terms remain applicable. Do not assume an upstream link alone covers redistribution obligations for a modified binary. Game redistribution rights are separate; this kit does not provide them.
+Keep the matching source archive and build kit beside the resulting binary. The app includes source revision metadata and license/notice files. PPSSPP's GPL-2.0-or-later license and dependency terms continue to apply. Game redistribution rights are separate and are not provided by this kit.

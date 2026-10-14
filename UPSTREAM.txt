@@ -8,3 +8,5 @@ Build and packaging: tools/build-shell-macos.sh, tools/bundle-private-game.py, t
 PPSSPP is GPL-2.0-or-later. Dependency terms are retained in OpenSourceNotices.
 Keep the pinned checkout, recursively initialized submodules, this patch, and build tooling together.
 The source-only kit contains no Midnight Club 3 game code or data, and grants no rights to redistribute it.
+
+Content format: schema 2, fixed MC3Content/game.iso, bundle version 12004.2.

@@ -200,7 +200,7 @@ index 1af913c..1645ecf 100644
  	if (tag == "Store") {
  		backFromStore_ = true;
 diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
-index 4a26924..b64d2fc 100644
+index 4a26924..7516d1e 100644
 --- a/UI/NativeApp.cpp
 +++ b/UI/NativeApp.cpp
 @@ -24,6 +24,10 @@
@@ -224,7 +224,7 @@ index 4a26924..b64d2fc 100644
 +		g_screenManager->switchScreen(new EmuScreen(boot_filename));
 +	} else {
 +		if (SingleGame::error.empty()) {
-+			SingleGame::error = "The private game content is missing. Rebuild this app with your game-root folder.";
++			SingleGame::error = "The private game content is missing. Rebuild this app with your verified game ISO.";
 +		}
 +		g_screenManager->switchScreen(new MainScreen());
 +	}
@@ -307,77 +307,114 @@ index db3fe95..b2d4b64 100644
  	std::string cppPath([path UTF8String]);
  
 diff --git a/ios/SceneDelegate.mm b/ios/SceneDelegate.mm
-index c1e52a8..7a63671 100644
+index c1e52a8..89c79ea 100644
 --- a/ios/SceneDelegate.mm
 +++ b/ios/SceneDelegate.mm
-@@ -17,6 +17,60 @@
+@@ -17,6 +17,97 @@
  
  #import <AVFoundation/AVFoundation.h>
  #include <string>
 +#include "UI/SingleGame.h"
 +#if defined(PPSSPP_SINGLE_GAME)
 +#import <CommonCrypto/CommonDigest.h>
++#include <cmath>
 +
-+// Fast launch preflight: all file sizes, plus hashes for the boot/SFO/UMD files.
-+// Full SHA-256 verification of every asset is performed by the packaging tool.
-+static NSString *CheckSingleGameContent(NSString *root) {
++// Bound launch-time checks; the private bundler verifies the complete ISO SHA-256.
++static bool SingleGameNumber(id object, unsigned long long limit, unsigned long long *out) {
++	if (![object isKindOfClass:[NSNumber class]]) return false;
++	double value = [object doubleValue];
++	if (!std::isfinite(value) || value < 0 || value > limit || std::floor(value) != value) return false;
++	*out = (unsigned long long)value;
++	return true;
++}
++
++static bool SingleGameHash(id object) {
++	if (![object isKindOfClass:[NSString class]] || [object length] != 64) return false;
++	NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"];
++	return [object rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound;
++}
++
++static NSString *CheckSingleGameContent(NSString *isoPath) {
 +	NSFileManager *fm = [NSFileManager defaultManager];
-+	NSString *manifestPath = [[root stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"manifest.json"];
-+	NSData *data = [NSData dataWithContentsOfFile:manifestPath];
-+	if (!data) return @"The private game manifest is missing. Rebuild the app with your game-root folder.";
++	NSString *manifestPath = [[isoPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"manifest.json"];
++	NSDictionary *manifestAttributes = [fm attributesOfItemAtPath:manifestPath error:nil];
++	if (![manifestAttributes[NSFileType] isEqual:NSFileTypeRegular]) return @"The private game manifest is missing.";
++	NSFileHandle *manifestHandle = [NSFileHandle fileHandleForReadingAtPath:manifestPath];
++	NSData *data = [manifestHandle readDataUpToLength:1024 * 1024 + 1 error:nil];
++	[manifestHandle closeAndReturnError:nil];
++	if (!data || data.length > 1024 * 1024) return @"The private game manifest is missing or too large. Rebuild the app with your verified game ISO.";
 +	id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
 +	if (![object isKindOfClass:[NSDictionary class]]) return @"The private game manifest is invalid.";
 +	NSDictionary *manifest = object;
-+	if (![manifest[@"disc_id"] isEqual:@"ULUS10021"] || ![manifest[@"files"] isKindOfClass:[NSArray class]])
-+		return @"The bundled content is not the configured Midnight Club 3 edition (ULUS10021).";
-+	NSArray *required = @[@"PSP_GAME/PARAM.SFO", @"PSP_GAME/SYSDIR/EBOOT.BIN", @"PSP_GAME/USRDIR/pspasset.dat", @"UMD_DATA.BIN"];
++	if (![manifest[@"schema"] isEqual:@2] || ![manifest[@"disc_id"] isEqual:@"ULUS10021"] ||
++		![manifest[@"iso"] isKindOfClass:[NSDictionary class]] || ![manifest[@"boot_checks"] isKindOfClass:[NSArray class]])
++		return @"The bundled content is not the configured Midnight Club 3 ISO edition (ULUS10021).";
++	NSDictionary *iso = manifest[@"iso"];
++	unsigned long long isoSize = 0;
++	if (![iso[@"path"] isEqual:@"game.iso"] || !SingleGameNumber(iso[@"size"], 2ULL * 1024 * 1024 * 1024, &isoSize) ||
++		isoSize < 65536 || isoSize % 2048 != 0 || !SingleGameHash(iso[@"sha256"]))
++		return @"The private ISO manifest is invalid.";
++	NSDictionary *attributes = [fm attributesOfItemAtPath:isoPath error:nil];
++	if (![attributes[NSFileType] isEqual:NSFileTypeRegular] || [attributes[NSFileSize] unsignedLongLongValue] != isoSize)
++		return @"The private game ISO is missing or incomplete. Rebuild from a verified copy.";
++	NSArray *checks = manifest[@"boot_checks"];
++	if (checks.count < 5 || checks.count > 256) return @"The ISO boot-check list is invalid.";
++	NSSet *required = [NSSet setWithArray:@[@"iso-volume-descriptors", @"param-sfo", @"eboot", @"umd-data", @"pspasset"]];
 +	NSMutableSet *seen = [NSMutableSet set];
-+	for (id item in manifest[@"files"]) {
-+		if (![item isKindOfClass:[NSDictionary class]]) return @"The game manifest has an invalid entry.";
-+		NSString *relative = item[@"path"];
-+		if (![relative isKindOfClass:[NSString class]] || [relative isAbsolutePath] ||
-+			[[relative pathComponents] containsObject:@".."] || [seen containsObject:relative])
-+			return @"The game manifest contains an invalid path.";
-+		[seen addObject:relative];
-+		NSString *file = [root stringByAppendingPathComponent:relative];
-+		NSDictionary *attributes = [fm attributesOfItemAtPath:file error:nil];
-+		NSNumber *expectedSize = item[@"size"];
-+		if (![expectedSize isKindOfClass:[NSNumber class]] ||
-+			![attributes[NSFileType] isEqual:NSFileTypeRegular] ||
-+			[attributes[NSFileSize] unsignedLongLongValue] != [expectedSize unsignedLongLongValue])
-+			return [NSString stringWithFormat:@"Missing or incomplete game file: %@. Rebuild from a verified copy.", relative];
-+		BOOL critical = [relative isEqual:@"PSP_GAME/PARAM.SFO"] ||
-+			[relative hasPrefix:@"PSP_GAME/SYSDIR/"] || [relative isEqual:@"UMD_DATA.BIN"];
-+		if (critical) {
-+			// Cap files read into memory. The configured edition's boot files are small.
-+			if ([expectedSize unsignedLongLongValue] > 32 * 1024 * 1024)
-+				return @"A boot file is unexpectedly large.";
-+			NSData *bytes = [NSData dataWithContentsOfFile:file];
-+			if (!bytes) return [NSString stringWithFormat:@"Cannot read boot file: %@", relative];
-+			unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-+			CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
-+			NSMutableString *hex = [NSMutableString stringWithCapacity:64];
-+			for (unsigned char byte : digest) [hex appendFormat:@"%02x", byte];
-+			if (![hex isEqual:item[@"sha256"]])
-+				return [NSString stringWithFormat:@"Corrupt boot file: %@. Rebuild from a verified copy.", relative];
++	unsigned long long total = 0;
++	// Validate every range before opening or allocating data for any of them.
++	for (id item in checks) {
++		if (![item isKindOfClass:[NSDictionary class]]) return @"The ISO boot-check entry is invalid.";
++		id name = item[@"name"];
++		unsigned long long offset = 0, size = 0;
++		if (![name isKindOfClass:[NSString class]] || [seen containsObject:name] ||
++			(![required containsObject:name] && ![name hasPrefix:@"iso-directory-"]) ||
++			!SingleGameNumber(item[@"offset"], isoSize, &offset) ||
++			!SingleGameNumber(item[@"size"], 8 * 1024 * 1024, &size) || size == 0 ||
++			size > isoSize - offset || !SingleGameHash(item[@"sha256"]))
++			return @"The ISO boot-check range is invalid.";
++		total += size;
++		if (total > 32 * 1024 * 1024) return @"The ISO boot checks exceed the safe startup limit.";
++		[seen addObject:name];
++	}
++	if (![required isSubsetOfSet:seen]) return @"The ISO manifest is missing required boot checks.";
++	NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:isoPath];
++	if (!handle) return @"Cannot open the private game ISO.";
++	NSString *failure = nil;
++	for (NSDictionary *item in checks) {
++		if (![handle seekToOffset:[item[@"offset"] unsignedLongLongValue] error:nil]) {
++			failure = @"Cannot seek within the private game ISO.";
++			break;
++		}
++		NSUInteger size = [item[@"size"] unsignedIntegerValue];
++		NSData *bytes = [handle readDataUpToLength:size error:nil];
++		if (!bytes || bytes.length != size) {
++			failure = @"Cannot read the complete ISO boot data.";
++			break;
++		}
++		unsigned char digest[CC_SHA256_DIGEST_LENGTH];
++		CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
++		NSMutableString *hex = [NSMutableString stringWithCapacity:64];
++		for (unsigned char byte : digest) [hex appendFormat:@"%02x", byte];
++		if (![hex isEqual:item[@"sha256"]]) {
++			failure = @"The private ISO boot data is corrupt. Rebuild from a verified copy.";
++			break;
 +		}
 +	}
-+	for (NSString *path in required) {
-+		if (![seen containsObject:path]) return [NSString stringWithFormat:@"Required game file is not listed: %@", path];
-+	}
-+	return nil;
++	[handle closeAndReturnError:nil];
++	return failure;
 +}
 +#endif
  
  static std::string gStartupArgStorage;
  
-@@ -105,6 +159,15 @@ -(void) launchPPSSPP {
+@@ -105,6 +196,15 @@ -(void) launchPPSSPP {
  		startupPath = nsString;
  	}
  
 +#if defined(PPSSPP_SINGLE_GAME)
 +	// Resolve from the current bundle on every launch/restart; app paths can change.
-+	startupPath = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"MC3Content/game-root"];
++	startupPath = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent:@"MC3Content/game.iso"];
 +	SingleGame::gamePath = Path(startupPath.UTF8String);
 +	NSString *contentError = CheckSingleGameContent(startupPath);
 +	SingleGame::contentReady = contentError == nil;
